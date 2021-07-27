@@ -3,6 +3,7 @@ import os
 import discord
 from dotenv import load_dotenv
 
+#Question Class to have helpful methods for interacting with a question.
 class question:
     def __init__(self, content, resType, options):
         self.content = content
@@ -15,8 +16,8 @@ class question:
         toRet= f"\n ❓ Question Number {qNum} ❓ :\n  \n{self.content}\n"
         for option in self.options:
             toRet = f"{toRet}{option}\n"
-        toRet = toRet + f"\nResponse: ➡️ (?): {None} ⬅️"
-        toRet = toRet + f"\nGuess: ↪️ (?): {None} ↩️"
+        toRet += f"\nResponse: ➡️ (?): {None} ⬅️"
+        toRet += f"\nGuess: ↪️ (?): {None} ↩️"
         return toRet
 
     def getUpdatedString(self, channel):
@@ -29,19 +30,19 @@ class question:
 
         if channel in responses:
             respInput = responses[channel][0]
-            rSymbol = whichResponse(respInput)
+            rSymbol = whichResponseSymbol(respInput)
             resp = whichResponseFull(respInput)
 
         if channel in plurality:
             guessInput = plurality[channel][0]
-            gSymbol = whichResponse(guessInput)
+            gSymbol = whichResponseSymbol(guessInput)
             guess = whichResponseFull(guessInput)
 
         toRet= f"\n ❓ Question Number {qNum} ❓ :\n  \n{self.content}\n"
         for option in self.options:
             toRet = f"{toRet}{option}\n"
-        toRet = toRet + f"Response: ➡️ ({rSymbol}): {resp} ⬅️\n"
-        toRet = toRet + f"Guess: ↪️ ({gSymbol}): {guess} ↩️"
+        toRet += f"\nResponse: ➡️ ({rSymbol}): {resp} ⬅️"
+        toRet += f"\nGuess: ↪️ ({gSymbol}): {guess} ↩️"
         return toRet
 
     def getResponses(self):
@@ -53,7 +54,7 @@ class question:
         return toRet
 
     def getResponsesFull(self, messageContent):
-        response = whichResponse(messageContent)
+        response = whichResponseSymbol(messageContent)
         for option in self.options:
             posL = option.find("(")
             posR = option.find(")")
@@ -134,21 +135,28 @@ playerChannels = [
 839199263212961842
 ]
 
-#give the bot all power and perms
+#Give the bot all power and permissions
 intents = discord.Intents().all()
 client = discord.Client(prefix=',',intents=intents)
 
 guild = None
+
+#Save the question number for display reason
 qNum = 0
+
+#Save the most recent question
 lastQuestion = None
 
+#Dictionaries for tracking
+#Messages save the most recent bot message to edit them for user experience reasons
 messages = {}
 responses = {}
 plurality = {}
 
-state = 0   #In Progress, 0 means waiting on user response, 1 not waiting on response
+#0 means waiting on user response, 1 not waiting on response, tells the bot when to listen to user responses
+state = 0
 
-f = open('C:/Users/Firel/Desktop/Coding/PollBot/fq.txt','r')
+questionFile = open('C:/Users/Firel/Desktop/Coding/PollBot/fq.txt','r')
 
 @client.event
 async def on_ready():
@@ -176,16 +184,19 @@ async def on_reaction_add(reaction,user):
 
 @client.event
 async def on_message(message):
-    flag = True
-
+    #Make sure to not respond to own messages
     if message.author == client.user:
         return
 
-    #gameMaster commands
+    #Needed to allow the Gm to play while controlling the bot from a single channel
+    flag = True
+
+    #GameMaster commands
     if int(message.author.id) == int(GM):
         print(f"Recieved {message.content} from GM {message.author}")
         flag = await gmCommand(message)
 
+    #Player response
     if flag and message.channel.id in playerChannels:
         print(f"Recieved {message.content} from {message.author}")
         await playerResponse(message)
@@ -197,9 +208,8 @@ async def gmCommand(message):
     global responses
     global messages
 
-    #next question command
+    #next question command, alternates sending question or sending the results of the questions
     if message.content.startswith('.'):
-        #do next question, then next guess
         if state == 0:
             await sendNextQuestion()
         elif state == 1:
@@ -212,6 +222,7 @@ async def gmCommand(message):
             member = guild.get_member(id)
             if member in guild.get_channel(GENERAL_CHAT).members:
                 await member.edit(mute = True)
+        return False
 
     #unmute all members
     elif message.content.startswith('unmute'):
@@ -219,6 +230,7 @@ async def gmCommand(message):
             member = guild.get_member(id)
             if member in guild.get_channel(GENERAL_CHAT).members:
                 await member.edit(mute = False)
+        return False
 
     #jump to question number x. Usage: goto x
     elif message.content.startswith('goto'):
@@ -233,7 +245,7 @@ async def gmCommand(message):
             line = ""
             while(qNum != count):
                 print(line)
-                line = f.readline()
+                line = questionFile.readline()
                 if ';' in line:
                     count = count+1
             lastQuestion = parseQuestion(line)
@@ -249,39 +261,46 @@ async def gmCommand(message):
         await sendNextQuestion()
         return False
 
-    #clears all messages in player channels
+    #clears all messages in all player channels. Mainly useful for testing purposes
     elif message.content.startswith('clear'):
         for chanId in playerChannels:
             channel = client.get_channel(chanId)
             await channel.purge()
         return False
-
     return True
-
 
 async def sendNextQuestion():
     global state
+    global messages
     global responses
     global plurality
     global qNum
     global lastQuestion
 
+    messages = {}
     responses = {}
     plurality = {}
     state = 1
     qNum = qNum + 1
 
-    line = f.readline()
+    #Skip lines not properly formatted for questions,
+    # not perfect but allows titles and comments in the .txt file
+    line = questionFile.readline()
     while ';' not in line:
-        line = f.readline()
+        line = questionFile.readline()
     print(line)
 
     lastQuestion = parseQuestion(line)
-    toSend = lastQuestion
 
+    '''
+    Multiple for loops to send the question and then to react to it.
+    While innefficient this is due to the built in delay on reactions
+    enforced on discord bots. This shows the questions to all users 
+    before reacting.
+    '''
     for chanId in playerChannels:
         pChan = client.get_channel(chanId)
-        message = await pChan.send(toSend)
+        message = await pChan.send(lastQuestion)
         messages[pChan] = message
 
     for chanId in playerChannels:
@@ -289,14 +308,13 @@ async def sendNextQuestion():
         message = messages[pChan]
         await message.add_reaction('🔄') 
 
+    #Question type dc (discussion) need no responses
     if lastQuestion.resType == 'dc':
         state = 0
 
-    if line == "":
-        return False
-
     return True
 
+#Build the results message
 async def sendResults():
     global responses
     global plurality
@@ -304,26 +322,29 @@ async def sendResults():
     state = 0
     resultsDict = {}
     
-    for tempResponse in lastQuestion.getResponses():
-        resultsDict[tempResponse] = []
+    for response in lastQuestion.getResponses():
+        resultsDict[response] = []
+
     for response in responses:
-        tempResponse = whichResponse(response[1])
-        resultsDict[tempResponse].append(response[0])
+        print(response,responses[response])
+        tempResponse = whichResponseSymbol(responses[response])
+        resultsDict[tempResponse].append(response)
+
     toSend = f" 📊 Results for Question {qNum} 📊 :\n  \n❓ Anwsers ❓\n"
-
     maxVotes = 0
-
     for key in resultsDict:
         if len(resultsDict[key]) > maxVotes:
             maxVotes = len(resultsDict[key])
-        toSend = toSend+f"({key}) ({len(resultsDict[key])})|"
+        toSend +=f"{whichResponseFull(key)} ({len(resultsDict[key])})|"
         for channel in resultsDict[key]:
             tempChannel = channel.name[0].upper()+channel.name[1:]
-            toSend = toSend+f" {tempChannel},"
-        toSend = toSend[:-1]
-        toSend = toSend+f"\n"
+            toSend +=f" {tempChannel},"
 
-    toSend = toSend + f" \n🗳️ Plurality 🗳️\n"
+        #Drop a garbage character 
+        toSend = toSend[:-1]
+        toSend +="\n"
+
+    toSend = toSend + " \n🗳️ Plurality 🗳️\n"
 
     maxKeys = []
     for key in resultsDict:
@@ -334,29 +355,30 @@ async def sendResults():
     for tempResponse in lastQuestion.getResponses():
         resultsDict[tempResponse] = []
     for pluralityResp in plurality:
-        tempResponse = whichResponse(pluralityResp[1])
-        resultsDict[tempResponse].append(pluralityResp[0])
+        tempResponse = whichResponseSymbol(plurality[pluralityResp])
+        resultsDict[tempResponse].append(pluralityResp)
 
     for key in maxKeys:
-        toSend = toSend+f"🎈({key})🎈 ({len(resultsDict[key])})|"
+        toSend +=f"🎈 {whichResponseFull(key)} 🎈 ({len(resultsDict[key])}) |"
         for channel in resultsDict[key]:
             tempChannel = channel.name[0].upper()+channel.name[1:]
-            toSend = toSend+f" {tempChannel},"
+            toSend +=f" {tempChannel},"
         toSend = toSend[:-1]
-        toSend = toSend+f"\n"
+        toSend +=f"\n"
 
     for key in resultsDict:
         if key not in maxKeys:
-            toSend = toSend+f"💢({key})💢 ({len(resultsDict[key])})|"
+            toSend +=f"💢 {whichResponseFull(key)} 💢 ({len(resultsDict[key])}) |"
             for channel in resultsDict[key]:
                 tempChannel = channel.name[0].upper()+channel.name[1:]
-                toSend = toSend+f" {tempChannel},"
+                toSend +=f" {tempChannel},"
             toSend = toSend[:-1]
-            toSend = toSend+f"\n"
+            toSend +=f"\n"
         
     for chanId in playerChannels:
         pChan = client.get_channel(chanId)
         await pChan.send(toSend)
+
     responses = {}
     plurality = {}
 
@@ -373,7 +395,6 @@ async def playerResponse(message):
             if message.channel in messages:
                 oldMess = messages[message.channel]
                 await oldMess.edit(content=lastQuestion.getUpdatedString(message.channel))
-
     printLeftover()
 
 async def testResponse(message, messageChannel):
@@ -399,7 +420,7 @@ async def testGuess(message, messageChannel):
 def hasNotSent(messageChannel,array):
     return messageChannel in array
 
-def whichResponse(messageContent):
+def whichResponseSymbol(messageContent):
     for response in lastQuestion.getResponses():
         if response in messageContent.upper():
             return response
@@ -407,22 +428,23 @@ def whichResponse(messageContent):
 def whichResponseFull(messageContent):
     return lastQuestion.getResponsesFull(messageContent)
 
+
 def acceptableResponse(messageContent):
-    count = 0
+    response = messageContent[0]
     if lastQuestion:
         for response in lastQuestion.getResponses():
             if response in messageContent.upper():
-                count = count+1
-        return count == 1
-    return -1
+                return True
+    return False
 
+#If there are 3 or less players who have not responded tell the gm who through the console
 def printLeftover():
     if len(playerChannels) - len(plurality) <= 3 and len(playerChannels) - len(plurality) != 0:
         toRet = "Have not Responded fully:"
         for channel in playerChannels:
             pChan = client.get_channel(channel)
             if pChan not in plurality:
-                toRet = toRet+f"| {pChan} "
+                toRet += f"| {pChan} "
         print(toRet)
 
 def parseQuestion(formattedQuestion):
@@ -442,3 +464,4 @@ def parsePopularity(question):
     return f""" 🗳️ Popularity for Question {qNum} 🗳️ :\n  \n Did the plurality of people vote for \n{question.getOptions()} for the question \n\"{question.content}\""""
 
 client.run(TOKEN)   
+
